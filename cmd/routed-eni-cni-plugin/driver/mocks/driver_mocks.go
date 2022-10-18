@@ -19,12 +19,11 @@
 package mock_driver
 
 import (
-	net "net"
-	reflect "reflect"
-
 	sgpp "github.com/aws/amazon-vpc-cni-k8s/pkg/sgpp"
 	logger "github.com/aws/amazon-vpc-cni-k8s/pkg/utils/logger"
 	gomock "github.com/golang/mock/gomock"
+	net "net"
+	reflect "reflect"
 )
 
 // MockNetworkAPIs is a mock of NetworkAPIs interface

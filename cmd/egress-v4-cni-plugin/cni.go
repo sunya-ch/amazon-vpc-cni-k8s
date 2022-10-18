@@ -266,6 +266,9 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	log.Debugf("Received an ADD request for: conf=%v; Plugin enabled=%s", netConf, netConf.Enabled)
+	log.Debugf("Prev Result: %v\n", netConf.PrevResult)
+	log.Debugf("Result: %v\n", result)
+
 	//We will not be vending out this as a separate plugin by itself and it is only intended to be used as a
 	//chained plugin to VPC CNI in IPv6 mode. We only need this plugin to kick in if v6 is enabled in VPC CNI. So, the
 	//value of an env variable in VPC CNI determines whether this plugin should be enabled and this is an attempt to
