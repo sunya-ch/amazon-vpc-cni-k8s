@@ -363,3 +363,10 @@ clean:    ## Clean temporary files and build artifacts from the project.
 
 help:   ## Display this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+
+
+hack-build-push: docker docker-init
+	docker tag $(IMAGE_NAME) res-cpe-team-docker-local.artifactory.swg-devops.com/amazon/amazon-k8s-cni:dev
+	docker tag $(INIT_IMAGE_NAME) res-cpe-team-docker-local.artifactory.swg-devops.com/amazon/amazon-k8s-cni-init:dev
+	docker push res-cpe-team-docker-local.artifactory.swg-devops.com/amazon/amazon-k8s-cni:dev
+	docker push res-cpe-team-docker-local.artifactory.swg-devops.com/amazon/amazon-k8s-cni-init:dev
