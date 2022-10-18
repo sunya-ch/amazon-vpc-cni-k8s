@@ -19,11 +19,10 @@
 package mock_ipwrapper
 
 import (
-	net "net"
-	reflect "reflect"
-
 	gomock "github.com/golang/mock/gomock"
 	netlink "github.com/vishvananda/netlink"
+	net "net"
+	reflect "reflect"
 )
 
 // MockIP is a mock of IP interface

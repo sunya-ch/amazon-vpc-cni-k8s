@@ -19,11 +19,10 @@
 package mock_cri
 
 import (
-	reflect "reflect"
-
 	cri "github.com/aws/amazon-vpc-cni-k8s/pkg/cri"
 	logger "github.com/aws/amazon-vpc-cni-k8s/pkg/utils/logger"
 	gomock "github.com/golang/mock/gomock"
+	reflect "reflect"
 )
 
 // MockAPIs is a mock of APIs interface
@@ -50,10 +49,10 @@ func (m *MockAPIs) EXPECT() *MockAPIsMockRecorder {
 }
 
 // GetRunningPodSandboxes mocks base method
-func (m *MockAPIs) GetRunningPodSandboxes(arg0 logger.Logger) ([]*cri.SandboxInfo, error) {
+func (m *MockAPIs) GetRunningPodSandboxes(arg0 logger.Logger) ([]cri.SandboxInfo, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetRunningPodSandboxes", arg0)
-	ret0, _ := ret[0].([]*cri.SandboxInfo)
+	ret0, _ := ret[0].([]cri.SandboxInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

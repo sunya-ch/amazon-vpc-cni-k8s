@@ -19,10 +19,9 @@
 package mock_ns
 
 import (
-	reflect "reflect"
-
 	ns "github.com/containernetworking/plugins/pkg/ns"
 	gomock "github.com/golang/mock/gomock"
+	reflect "reflect"
 )
 
 // MockNetNS is a mock of NetNS interface

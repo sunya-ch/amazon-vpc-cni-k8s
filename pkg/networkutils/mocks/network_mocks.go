@@ -19,12 +19,11 @@
 package mock_networkutils
 
 import (
+	gomock "github.com/golang/mock/gomock"
+	netlink "github.com/vishvananda/netlink"
 	net "net"
 	reflect "reflect"
 	time "time"
-
-	gomock "github.com/golang/mock/gomock"
-	netlink "github.com/vishvananda/netlink"
 )
 
 // MockNetworkAPIs is a mock of NetworkAPIs interface
@@ -48,20 +47,6 @@ func NewMockNetworkAPIs(ctrl *gomock.Controller) *MockNetworkAPIs {
 // EXPECT returns an object that allows the caller to indicate expected use
 func (m *MockNetworkAPIs) EXPECT() *MockNetworkAPIsMockRecorder {
 	return m.recorder
-}
-
-// DeleteRuleListBySrc mocks base method
-func (m *MockNetworkAPIs) DeleteRuleListBySrc(arg0 net.IPNet) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteRuleListBySrc", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeleteRuleListBySrc indicates an expected call of DeleteRuleListBySrc
-func (mr *MockNetworkAPIsMockRecorder) DeleteRuleListBySrc(arg0 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteRuleListBySrc", reflect.TypeOf((*MockNetworkAPIs)(nil).DeleteRuleListBySrc), arg0)
 }
 
 // GetExcludeSNATCIDRs mocks base method
@@ -140,7 +125,7 @@ func (mr *MockNetworkAPIsMockRecorder) SetupENINetwork(arg0, arg1, arg2, arg3 in
 // SetupHostNetwork mocks base method
 func (m *MockNetworkAPIs) SetupHostNetwork(arg0 []string, arg1 string, arg2 *net.IP, arg3, arg4, arg5 bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetupHostNetwork", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "SetupHostNetwork", arg0, arg1, arg2, arg3, arg4, arg5)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
@@ -148,13 +133,13 @@ func (m *MockNetworkAPIs) SetupHostNetwork(arg0 []string, arg1 string, arg2 *net
 // SetupHostNetwork indicates an expected call of SetupHostNetwork
 func (mr *MockNetworkAPIsMockRecorder) SetupHostNetwork(arg0, arg1, arg2, arg3, arg4, arg5 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetupHostNetwork", reflect.TypeOf((*MockNetworkAPIs)(nil).SetupHostNetwork), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetupHostNetwork", reflect.TypeOf((*MockNetworkAPIs)(nil).SetupHostNetwork), arg0, arg1, arg2, arg3, arg4, arg5)
 }
 
 // UpdateHostIptablesRules mocks base method
 func (m *MockNetworkAPIs) UpdateHostIptablesRules(arg0 []string, arg1 string, arg2 *net.IP, arg3, arg4 bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateHostIptablesRules", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "UpdateHostIptablesRules", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
@@ -162,7 +147,7 @@ func (m *MockNetworkAPIs) UpdateHostIptablesRules(arg0 []string, arg1 string, ar
 // UpdateHostIptablesRules indicates an expected call of UpdateHostIptablesRules
 func (mr *MockNetworkAPIsMockRecorder) UpdateHostIptablesRules(arg0, arg1, arg2, arg3, arg4 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateHostIptablesRules", reflect.TypeOf((*MockNetworkAPIs)(nil).UpdateHostIptablesRules), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateHostIptablesRules", reflect.TypeOf((*MockNetworkAPIs)(nil).UpdateHostIptablesRules), arg0, arg1, arg2, arg3, arg4)
 }
 
 // UpdateRuleListBySrc mocks base method
