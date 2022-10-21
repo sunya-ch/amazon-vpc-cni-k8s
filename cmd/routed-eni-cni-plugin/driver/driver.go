@@ -91,6 +91,7 @@ type createVethPairContext struct {
 	ip           ipwrapper.IP
 	mtu          int
 	procSys      procsyswrapper.ProcSys
+	v4ContHWAddr net.HardwareAddr
 }
 
 func newCreateVethPairContext(contVethName string, hostVethName string, v4Addr *net.IPNet, v6Addr *net.IPNet, mtu int) *createVethPairContext {
@@ -136,6 +137,7 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 	if err != nil {
 		return errors.Wrapf(err, "setup NS network: failed to find link %q", createVethContext.contVethName)
 	}
+	createVethContext.v4ContHWAddr = contVeth.Attrs().HardwareAddr
 
 	// Explicitly set the veth to UP state, because netlink doesn't always do that on all the platforms with net.FlagUp.
 	// veth won't get a link local address unless it's set to UP state.
@@ -169,11 +171,23 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 	var addr *netlink.Addr
 	var defNet *net.IPNet
 
+	var netGwIP net.IP
+	var netGWIPNet, netIPNet *net.IPNet
+
 	if createVethContext.v4Addr != nil {
 		gw = net.IPv4(169, 254, 1, 1)
 		maskLen = 32
 		addr = &netlink.Addr{IPNet: createVethContext.v4Addr}
 		defNet = &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, maskLen)}
+
+		v4Addr := createVethContext.v4Addr
+		netAddr := v4Addr.IP.Mask(v4Addr.Mask).To4()
+		netAddr[3] = netAddr[3] + byte(1)
+		netGwIP = net.IPv4(netAddr[0], netAddr[1], netAddr[2], netAddr[3])
+		netGWIPNet = &net.IPNet{IP: netGwIP, Mask: net.CIDRMask(32, 32)}
+		netIPNet = &net.IPNet{IP: v4Addr.IP.Mask(v4Addr.Mask), Mask: v4Addr.Mask}
+		// set back cidr
+		createVethContext.v4Addr.Mask = net.CIDRMask(32, 32)
 	} else if createVethContext.v6Addr != nil {
 		gw = net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
 		maskLen = 128
@@ -181,14 +195,14 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 		defNet = &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, maskLen)}
 	}
 
-	gwNet := &net.IPNet{IP: gw, Mask: net.CIDRMask(maskLen, maskLen)}
+	// gwNet := &net.IPNet{IP: gw, Mask: net.CIDRMask(maskLen, maskLen)}
 
-	if err = createVethContext.netLink.RouteReplace(&netlink.Route{
-		LinkIndex: contVeth.Attrs().Index,
-		Scope:     netlink.SCOPE_LINK,
-		Dst:       gwNet}); err != nil {
-		return errors.Wrap(err, "setup NS network: failed to add default gateway")
-	}
+	// if err = createVethContext.netLink.RouteReplace(&netlink.Route{
+	// 	LinkIndex: contVeth.Attrs().Index,
+	// 	Scope:     netlink.SCOPE_LINK,
+	// 	Dst:       gwNet}); err != nil {
+	// 	return errors.Wrap(err, "setup NS network: failed to add default gateway")
+	// }
 
 	// Add a default route via dummy next hop(169.254.1.1 or fe80::1). Then all outgoing traffic will be routed by this
 	// default route via dummy next hop (169.254.1.1 or fe80::1)
@@ -211,19 +225,51 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 		return errors.Wrapf(err, "setup NS network: failed to add IP addr to %q", createVethContext.contVethName)
 	}
 
+	if createVethContext.v4Addr != nil {
+		if err = createVethContext.netLink.RouteReplace(&netlink.Route{
+			LinkIndex: contVeth.Attrs().Index,
+			Scope:     netlink.SCOPE_LINK,
+			Dst:       netGWIPNet,
+			}); err != nil {
+			return errors.Wrapf(err, "setup NS network: failed to add default gateway %v", netGwIP)
+		}
+		// add static ARP entry for default gateway
+		// we are using routed mode on the host and container need this static ARP entry to resolve its default gateway.
+		// IP address family is derived from the IP address passed to the function (v4 or v6)
+		neigh := &netlink.Neigh{
+			LinkIndex:    contVeth.Attrs().Index,
+			State:        netlink.NUD_PERMANENT,
+			IP:           netGwIP,
+			HardwareAddr: hostVeth.Attrs().HardwareAddr,
+		}
+		if err = createVethContext.netLink.NeighAdd(neigh); err != nil {
+			return errors.Wrapf(err, "setup NS network: failed to add static ARP of %v", neigh)
+		}
+		route := &netlink.Route{
+			LinkIndex: contVeth.Attrs().Index,
+			Scope:     netlink.SCOPE_UNIVERSE,
+			Dst:       netIPNet,
+			Gw:        netGwIP,
+			Src:       createVethContext.v4Addr.IP,
+		}
+		if err = createVethContext.netLink.RouteAdd(route); err != nil {
+			return errors.Wrapf(err, "setup NS network: failed to add route %v", route)
+		}
+	}
+
 	// add static ARP entry for default gateway
 	// we are using routed mode on the host and container need this static ARP entry to resolve its default gateway.
 	// IP address family is derived from the IP address passed to the function (v4 or v6)
-	neigh := &netlink.Neigh{
-		LinkIndex:    contVeth.Attrs().Index,
-		State:        netlink.NUD_PERMANENT,
-		IP:           gwNet.IP,
-		HardwareAddr: hostVeth.Attrs().HardwareAddr,
-	}
+	// neigh := &netlink.Neigh{
+	// 	LinkIndex:    contVeth.Attrs().Index,
+	// 	State:        netlink.NUD_PERMANENT,
+	// 	IP:           gwNet.IP,
+	// 	HardwareAddr: hostVeth.Attrs().HardwareAddr,
+	// }
 
-	if err = createVethContext.netLink.NeighAdd(neigh); err != nil {
-		return errors.Wrap(err, "setup NS network: failed to add static ARP")
-	}
+	// if err = createVethContext.netLink.NeighAdd(neigh); err != nil {
+	// 	return errors.Wrap(err, "setup NS network: failed to add static ARP")
+	// }
 
 	if createVethContext.v6Addr != nil && createVethContext.v6Addr.IP.To16() != nil {
 		if err := waitForAddressesToBeStable(createVethContext.netLink, createVethContext.contVethName, v6DADTimeout); err != nil {
@@ -430,6 +476,14 @@ func (n *linuxNetwork) setupVeth(hostVethName string, contVethName string, netns
 	if err = n.netLink.LinkSetUp(hostVeth); err != nil {
 		return nil, errors.Wrapf(err, "failed to setup hostVeth %s", hostVethName)
 	}
+
+	if v4Addr != nil {
+		// Statically add contVeth arp on hostVeth
+		if err := n.setUpHostNeigh(hostVeth, v4Addr, createVethContext.v4ContHWAddr); err != nil {
+			log.Debugf("failed setUpHostNeigh: %v", err)
+		}
+	}
+
 	return hostVeth, nil
 }
 
@@ -608,6 +662,19 @@ func (n *linuxNetwork) teardownIIFBasedContainerRouteRules(rtTable int, log logg
 	return nil
 }
 
+func (n *linuxNetwork) setUpHostNeigh(hostVeth netlink.Link, containerAddr *net.IPNet, containerHWAddr net.HardwareAddr) error {
+	neigh := &netlink.Neigh{
+		LinkIndex:    hostVeth.Attrs().Index,
+		State:        netlink.NUD_PERMANENT,
+		IP:           containerAddr.IP,
+		HardwareAddr: containerHWAddr,
+	}
+	if err := n.netLink.NeighAdd(neigh); err != nil {
+		return errors.Wrapf(err, "setup NS network: failed to add static ARP of %v", neigh)
+	}
+	return nil
+}
+
 // buildRoutesForVlan builds routes required for the vlan link.
 func buildRoutesForVlan(vlanTableID int, vlanIndex int, gw net.IP) []netlink.Route {
 	return []netlink.Route{
@@ -641,3 +708,4 @@ func buildVlanLink(vlanName string, vlanID int, parentIfIndex int, eniMAC string
 	la.HardwareAddr, _ = net.ParseMAC(eniMAC)
 	return &netlink.Vlan{LinkAttrs: la, VlanId: vlanID}
 }
+

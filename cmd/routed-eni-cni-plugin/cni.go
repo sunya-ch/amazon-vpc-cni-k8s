@@ -71,6 +71,9 @@ type NetConf struct {
 	// ENIPrimaryAddress is ENI Primary address for specifying eni device.
 	ENIPrimaryAddress string `json:"primaryAddress"`
 
+	// Mask is CIDR Mask bit of target interface
+	Mask int `json:"mask"`
+
 	PluginLogFile string `json:"pluginLogFile"`
 
 	PluginLogLevel string `json:"pluginLogLevel"`
@@ -201,7 +204,7 @@ func add(args *skel.CmdArgs, cniTypes typeswrapper.CNITYPES, grpcClient grpcwrap
 	if r.IPv4Addr != "" {
 		v4Addr = &net.IPNet{
 			IP:   net.ParseIP(r.IPv4Addr),
-			Mask: net.CIDRMask(32, 32),
+			Mask: net.CIDRMask(conf.Mask, 32),
 		}
 		addrFamily = "4"
 		addr = v4Addr
