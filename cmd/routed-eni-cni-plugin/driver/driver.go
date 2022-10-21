@@ -192,14 +192,12 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 
 	// Add a default route via dummy next hop(169.254.1.1 or fe80::1). Then all outgoing traffic will be routed by this
 	// default route via dummy next hop (169.254.1.1 or fe80::1)
-	if err = createVethContext.netLink.RouteAdd(&netlink.Route{
-		LinkIndex: contVeth.Attrs().Index,
-		Scope:     netlink.SCOPE_UNIVERSE,
-		Dst:       defNet,
-		Gw:        gw,
-	}); err != nil {
-		return errors.Wrap(err, "setup NS network: failed to add default route")
-	}
+	_ = createVethContext.netLink.RouteAdd(&netlink.Route{
+			LinkIndex: contVeth.Attrs().Index,
+			Scope:     netlink.SCOPE_UNIVERSE,
+			Dst:       defNet,
+			Gw:        gw,
+		})
 
 	if err = createVethContext.netLink.AddrAdd(contVeth, addr); err != nil {
 		return errors.Wrapf(err, "setup NS network: failed to add IP addr to %q", createVethContext.contVethName)
