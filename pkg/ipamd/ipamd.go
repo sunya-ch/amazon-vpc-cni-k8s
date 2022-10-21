@@ -2226,3 +2226,13 @@ func (c *IPAMContext) isConfigValid() bool {
 
 	return true
 }
+
+// getENIID - get ENIID from primary IP if found
+func (c *IPAMContext) getENIID(primaryAddress string) string {
+	for eniID, ip := range c.primaryIP {
+		if ip == primaryAddress {
+			return eniID
+		}
+	}
+	return ""
+}

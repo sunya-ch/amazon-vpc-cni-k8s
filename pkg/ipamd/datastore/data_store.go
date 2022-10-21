@@ -707,11 +707,15 @@ func (ds *DataStore) AddIPv6CidrToStore(eniID string, ipv6Cidr net.IPNet, isPref
 	return nil
 }
 
-func (ds *DataStore) AssignPodIPAddress(ipamKey IPAMKey, ipamMetadata IPAMMetadata, isIPv4Enabled bool, isIPv6Enabled bool) (ipv4Address string,
+func (ds *DataStore) AssignPodIPAddress(ipamKey IPAMKey, ipamMetadata IPAMMetadata, isIPv4Enabled bool, isIPv6Enabled bool, eniID string) (ipv4Address string,
 	ipv6Address string, deviceNumber int, err error) {
 	//Currently it's either v4 or v6. Dual Stack mode isn't supported.
 	if isIPv4Enabled {
-		ipv4Address, deviceNumber, err = ds.AssignPodIPv4Address(ipamKey, ipamMetadata)
+		if eniID != "" {
+			ipv4Address, deviceNumber, err = ds.AssignPodIPv4AddressWithDeviceSpec(ipamKey, ipamMetadata, eniID)
+		} else {
+			ipv4Address, deviceNumber, err = ds.AssignPodIPv4Address(ipamKey, ipamMetadata)
+		}
 	} else if isIPv6Enabled {
 		ipv6Address, deviceNumber, err = ds.AssignPodIPv6Address(ipamKey, ipamMetadata)
 	}
@@ -768,6 +772,58 @@ func (ds *DataStore) AssignPodIPv6Address(ipamKey IPAMKey, ipamMetadata IPAMMeta
 	return "", -1, errors.New("assignPodIPv6AddressUnsafe: no available IP addresses")
 }
 
+// assignPodIPv4Address returns IPv4 address, device number, error when considering specific *ENI
+func (ds *DataStore) assignPodIPv4Address(ipamKey IPAMKey, ipamMetadata IPAMMetadata, eni *ENI) (ipv4address string, deviceNumber int, err error) {
+	for _, availableCidr := range eni.AvailableIPv4Cidrs {
+		var addr *AddressInfo
+		var strPrivateIPv4 string
+		var err error
+
+		if (ds.isPDEnabled && availableCidr.IsPrefix) || (!ds.isPDEnabled && !availableCidr.IsPrefix) {
+			strPrivateIPv4, err = ds.getFreeIPv4AddrfromCidr(availableCidr)
+			if err != nil {
+				ds.log.Debugf("Unable to get IP address from CIDR: %v", err)
+				//Check in next CIDR
+				continue
+			}
+			ds.log.Debugf("New IP from CIDR pool- %s", strPrivateIPv4)
+			if availableCidr.IPAddresses == nil {
+				availableCidr.IPAddresses = make(map[string]*AddressInfo)
+			}
+			//Update prometheus for ips per cidr
+			//Secondary IP mode will have /32:1 and Prefix mode will have /28:<number of /32s>
+			ipsPerCidr.With(prometheus.Labels{"cidr": availableCidr.Cidr.String()}).Inc()
+		} else {
+			//This can happen during upgrade or PD enable/disable knob toggle
+			//ENI can have prefixes attached and no space for SIPs or vice versa
+			continue
+		}
+
+		addr = availableCidr.IPAddresses[strPrivateIPv4]
+		if addr == nil {
+			// addr is nil when we are using a new IP from prefix or SIP pool
+			// if addr is out of cooldown or not assigned, we can reuse addr
+			addr = &AddressInfo{Address: strPrivateIPv4}
+		}
+
+		availableCidr.IPAddresses[strPrivateIPv4] = addr
+		ds.assignPodIPAddressUnsafe(addr, ipamKey, ipamMetadata, time.Now())
+
+		if err := ds.writeBackingStoreUnsafe(); err != nil {
+			ds.log.Warnf("Failed to update backing store: %v", err)
+			// Important! Unwind assignment
+			ds.unassignPodIPAddressUnsafe(addr)
+			//Remove the IP from eni DB
+			delete(availableCidr.IPAddresses, addr.Address)
+			//Update prometheus for ips per cidr
+			ipsPerCidr.With(prometheus.Labels{"cidr": availableCidr.Cidr.String()}).Dec()
+			return "", -1, err
+		}
+		return addr.Address, eni.DeviceNumber, nil
+	}
+	return "", -1, fmt.Errorf("ENI %s does not have available addresses", eni.ID)
+}
+
 // AssignPodIPv4Address assigns an IPv4 address to pod
 // It returns the assigned IPv4 address, device number, error
 func (ds *DataStore) AssignPodIPv4Address(ipamKey IPAMKey, ipamMetadata IPAMMetadata) (ipv4address string, deviceNumber int, err error) {
@@ -782,58 +838,40 @@ func (ds *DataStore) AssignPodIPv4Address(ipamKey IPAMKey, ipamMetadata IPAMMeta
 	}
 
 	for _, eni := range ds.eniPool {
-		for _, availableCidr := range eni.AvailableIPv4Cidrs {
-			var addr *AddressInfo
-			var strPrivateIPv4 string
-			var err error
-
-			if (ds.isPDEnabled && availableCidr.IsPrefix) || (!ds.isPDEnabled && !availableCidr.IsPrefix) {
-				strPrivateIPv4, err = ds.getFreeIPv4AddrfromCidr(availableCidr)
-				if err != nil {
-					ds.log.Debugf("Unable to get IP address from CIDR: %v", err)
-					//Check in next CIDR
-					continue
-				}
-				ds.log.Debugf("New IP from CIDR pool- %s", strPrivateIPv4)
-				if availableCidr.IPAddresses == nil {
-					availableCidr.IPAddresses = make(map[string]*AddressInfo)
-				}
-				//Update prometheus for ips per cidr
-				//Secondary IP mode will have /32:1 and Prefix mode will have /28:<number of /32s>
-				ipsPerCidr.With(prometheus.Labels{"cidr": availableCidr.Cidr.String()}).Inc()
-			} else {
-				//This can happen during upgrade or PD enable/disable knob toggle
-				//ENI can have prefixes attached and no space for SIPs or vice versa
-				continue
-			}
-
-			addr = availableCidr.IPAddresses[strPrivateIPv4]
-			if addr == nil {
-				// addr is nil when we are using a new IP from prefix or SIP pool
-				// if addr is out of cooldown or not assigned, we can reuse addr
-				addr = &AddressInfo{Address: strPrivateIPv4}
-			}
-
-			availableCidr.IPAddresses[strPrivateIPv4] = addr
-			ds.assignPodIPAddressUnsafe(addr, ipamKey, ipamMetadata, time.Now())
-
-			if err := ds.writeBackingStoreUnsafe(); err != nil {
-				ds.log.Warnf("Failed to update backing store: %v", err)
-				// Important! Unwind assignment
-				ds.unassignPodIPAddressUnsafe(addr)
-				//Remove the IP from eni DB
-				delete(availableCidr.IPAddresses, addr.Address)
-				//Update prometheus for ips per cidr
-				ipsPerCidr.With(prometheus.Labels{"cidr": availableCidr.Cidr.String()}).Dec()
-				return "", -1, err
-			}
-			return addr.Address, eni.DeviceNumber, nil
+		ipv4address, deviceNumber, err = ds.assignPodIPv4Address(ipamKey, ipamMetadata, eni)
+		if err == nil {
+			return ipv4address, deviceNumber, err
 		}
-		ds.log.Debugf("AssignPodIPv4Address: ENI %s does not have available addresses", eni.ID)
+		ds.log.Debugf("AssignIPv4Address: %v", err)
 	}
 
 	ds.log.Errorf("DataStore has no available IP/Prefix addresses")
-	return "", -1, errors.New("assignPodIPv4AddressUnsafe: no available IP/Prefix addresses")
+	return "", -1, errors.New("AssignPodIPv4Address: no available IP/Prefix addresses")
+}
+
+// AssignPodIPv4AddressWithDeviceSpec assigns an IPv4 address to pod on specific ENI ID
+// It returns the assigned IPv4 address, deviceNumber, error
+func (ds *DataStore) AssignPodIPv4AddressWithDeviceSpec(ipamKey IPAMKey, ipamMetadata IPAMMetadata, eniID string) (ipv4address string, deviceNumber int, err error) {
+	ds.lock.Lock()
+	defer ds.lock.Unlock()
+
+	ds.log.Debugf("AssignPodIPv4AddressWithDeviceSpec: IP address pool stats: total: %d, assigned %d, eniID: %s", ds.total, ds.assigned, eniID)
+
+	if eni, _, addr := ds.eniPool.FindAddressForSandbox(ipamKey); addr != nil {
+		ds.log.Infof("AssignPodIPv4AddressWithDeviceSpec: duplicate pod assign for sandbox %s", ipamKey)
+		return addr.Address, eni.DeviceNumber, nil
+	}
+
+	if eni, found := ds.eniPool[eniID]; found {
+		ipv4address, deviceNumber, err = ds.assignPodIPv4Address(ipamKey, ipamMetadata, eni)
+		if err == nil {
+			return ipv4address, deviceNumber, err
+		}
+		ds.log.Debugf("AssignPodIPv4AddressWithDeviceSpec: %v", err)
+	}
+
+	ds.log.Errorf("DataStore has no available IP/Prefix addresses")
+	return "", -1, errors.New("AssignPodIPv4AddressWithDeviceSpec: no available IP/Prefix addresses")
 }
 
 // assignPodIPAddressUnsafe mark Address as assigned.

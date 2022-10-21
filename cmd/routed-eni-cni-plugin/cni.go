@@ -68,6 +68,9 @@ type NetConf struct {
 	// PodSGEnforcingMode is the enforcing mode for Security groups for pods feature
 	PodSGEnforcingMode sgpp.EnforcingMode `json:"podSGEnforcingMode"`
 
+	// ENIPrimaryAddress is ENI Primary address for specifying eni device.
+	ENIPrimaryAddress string `json:"primaryAddress"`
+
 	PluginLogFile string `json:"pluginLogFile"`
 
 	PluginLogLevel string `json:"pluginLogLevel"`
@@ -136,8 +139,8 @@ func add(args *skel.CmdArgs, cniTypes typeswrapper.CNITYPES, grpcClient grpcwrap
 		return errors.Wrap(err, "add cmd: error loading config from args")
 	}
 
-	log.Infof("Received CNI add request: ContainerID(%s) Netns(%s) IfName(%s) Args(%s) Path(%s) argsStdinData(%s)",
-		args.ContainerID, args.Netns, args.IfName, args.Args, args.Path, args.StdinData)
+	log.Infof("Received CNI add request: ContainerID(%s) Netns(%s) IfName(%s) Args(%s) Path(%s) argsStdinData(%s) conf(%s)",
+		args.ContainerID, args.Netns, args.IfName, args.Args, args.Path, args.StdinData, conf)
 
 	log.Debugf("Prev Result: %v\n", conf.PrevResult)
 
@@ -171,6 +174,7 @@ func add(args *skel.CmdArgs, cniTypes typeswrapper.CNITYPES, grpcClient grpcwrap
 			ContainerID:                args.ContainerID,
 			NetworkName:                conf.Name,
 			IfName:                     args.IfName,
+			ENIPrimaryAddress:          conf.ENIPrimaryAddress,
 		})
 
 	if err != nil {

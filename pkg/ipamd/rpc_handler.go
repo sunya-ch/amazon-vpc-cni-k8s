@@ -61,8 +61,8 @@ type PodENIData struct {
 
 // AddNetwork processes CNI add network request and return an IP address for container
 func (s *server) AddNetwork(ctx context.Context, in *rpc.AddNetworkRequest) (*rpc.AddNetworkReply, error) {
-	log.Infof("Received AddNetwork for NS %s, Sandbox %s, ifname %s",
-		in.Netns, in.ContainerID, in.IfName)
+	log.Infof("Received AddNetwork for NS %s, Sandbox %s, ifname %s, primaryAddress: %s",
+		in.Netns, in.ContainerID, in.IfName, in.ENIPrimaryAddress)
 	log.Debugf("AddNetworkRequest: %s", in)
 	addIPCnt.Inc()
 
@@ -148,7 +148,8 @@ func (s *server) AddNetwork(ctx context.Context, in *rpc.AddNetworkRequest) (*rp
 			K8SPodNamespace: in.K8S_POD_NAMESPACE,
 			K8SPodName:      in.K8S_POD_NAME,
 		}
-		ipv4Addr, ipv6Addr, deviceNumber, err = s.ipamContext.dataStore.AssignPodIPAddress(ipamKey, ipamMetadata, s.ipamContext.enableIPv4, s.ipamContext.enableIPv6)
+		eniID := s.ipamContext.getENIID(in.ENIPrimaryAddress)
+		ipv4Addr, ipv6Addr, deviceNumber, err = s.ipamContext.dataStore.AssignPodIPAddress(ipamKey, ipamMetadata, s.ipamContext.enableIPv4, s.ipamContext.enableIPv6, eniID)
 	}
 
 	var pbVPCV4cidrs, pbVPCV6cidrs []string

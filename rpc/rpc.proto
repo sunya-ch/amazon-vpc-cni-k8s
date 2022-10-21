@@ -19,7 +19,8 @@ message AddNetworkRequest {
   string IfName = 5;
   string NetworkName = 6;
   string Netns = 4;
-  // next field: 9
+  string ENIPrimaryAddress = 9;
+  // next field: 10
 }
 
 message AddNetworkReply {
