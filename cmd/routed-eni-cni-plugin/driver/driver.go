@@ -91,6 +91,8 @@ type createVethPairContext struct {
 	ip           ipwrapper.IP
 	mtu          int
 	procSys      procsyswrapper.ProcSys
+	// for setting arp of secondary interface on container to hostVeth
+	v4ContHWAddr net.HardwareAddr
 }
 
 func newCreateVethPairContext(contVethName string, hostVethName string, v4Addr *net.IPNet, v6Addr *net.IPNet, mtu int) *createVethPairContext {
@@ -136,6 +138,8 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 	if err != nil {
 		return errors.Wrapf(err, "setup NS network: failed to find link %q", createVethContext.contVethName)
 	}
+	// for setting arp of secondary interface on container to hostVeth
+	createVethContext.v4ContHWAddr = contVeth.Attrs().HardwareAddr
 
 	// Explicitly set the veth to UP state, because netlink doesn't always do that on all the platforms with net.FlagUp.
 	// veth won't get a link local address unless it's set to UP state.
@@ -168,12 +172,26 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 	var maskLen int
 	var addr *netlink.Addr
 	var defNet *net.IPNet
+	var netGwIP net.IP
+	var netGWIPNet, netIPNet *net.IPNet
 
 	if createVethContext.v4Addr != nil {
 		gw = net.IPv4(169, 254, 1, 1)
 		maskLen = 32
 		addr = &netlink.Addr{IPNet: createVethContext.v4Addr}
 		defNet = &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, maskLen)}
+
+		// For supporting default routes with multiple interfaces,
+		// we route subnet CIDR (netIPNet) to subnet gateway (netGwIP)
+		// the subnet CIDR is obtained from Mask: net.CIDRMask(conf.Mask, 32) set before this call
+		v4Addr := createVethContext.v4Addr
+		netAddr := v4Addr.IP.Mask(v4Addr.Mask).To4()
+		netAddr[3] = netAddr[3] + byte(1)
+		netGwIP = net.IPv4(netAddr[0], netAddr[1], netAddr[2], netAddr[3])
+		netGWIPNet = &net.IPNet{IP: netGwIP, Mask: net.CIDRMask(32, 32)}
+		netIPNet = &net.IPNet{IP: v4Addr.IP.Mask(v4Addr.Mask), Mask: v4Addr.Mask}
+		// set back cidr for keeping the rest configuration with /32
+		createVethContext.v4Addr.Mask = net.CIDRMask(32, 32)
 	} else if createVethContext.v6Addr != nil {
 		gw = net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
 		maskLen = 128
@@ -201,6 +219,39 @@ func (createVethContext *createVethPairContext) run(hostNS ns.NetNS) error {
 
 	if err = createVethContext.netLink.AddrAdd(contVeth, addr); err != nil {
 		return errors.Wrapf(err, "setup NS network: failed to add IP addr to %q", createVethContext.contVethName)
+	}
+
+	// add routes and arp entry for multiple interfaces case (now supporting only V4)
+	if createVethContext.v4Addr != nil {
+		//  add subnet gateway
+		if err = createVethContext.netLink.RouteReplace(&netlink.Route{
+			LinkIndex: contVeth.Attrs().Index,
+			Scope:     netlink.SCOPE_LINK,
+			Dst:       netGWIPNet,
+			}); err != nil {
+			return errors.Wrapf(err, "setup NS network: failed to add default gateway %v", netGwIP)
+		}
+		//  statically set arp MAC of subnet gateway to hostVeth MAC
+		neigh := &netlink.Neigh{
+			LinkIndex:    contVeth.Attrs().Index,
+			State:        netlink.NUD_PERMANENT,
+			IP:           netGwIP,
+			HardwareAddr: hostVeth.Attrs().HardwareAddr,
+		}
+		if err = createVethContext.netLink.NeighAdd(neigh); err != nil {
+			return errors.Wrapf(err, "setup NS network: failed to add static ARP of %v", neigh)
+		}
+		//  add route subnet CIDR via subnet gateway src container IP
+		route := &netlink.Route{
+			LinkIndex: contVeth.Attrs().Index,
+			Scope:     netlink.SCOPE_UNIVERSE,
+			Dst:       netIPNet,
+			Gw:        netGwIP,
+			Src:       createVethContext.v4Addr.IP,
+		}
+		if err = createVethContext.netLink.RouteAdd(route); err != nil {
+			return errors.Wrapf(err, "setup NS network: failed to add route %v", route)
+		}
 	}
 
 	// add static ARP entry for default gateway
@@ -422,6 +473,14 @@ func (n *linuxNetwork) setupVeth(hostVethName string, contVethName string, netns
 	if err = n.netLink.LinkSetUp(hostVeth); err != nil {
 		return nil, errors.Wrapf(err, "failed to setup hostVeth %s", hostVethName)
 	}
+
+	// set container MAC to hostVeth for secondary interface (now supporting only V4)
+	if v4Addr != nil {
+		if err := n.setUpHostNeigh(hostVeth, v4Addr, createVethContext.v4ContHWAddr); err != nil {
+			log.Debugf("failed setUpHostNeigh: %v", err)
+		}
+	}
+
 	return hostVeth, nil
 }
 
@@ -597,6 +656,20 @@ func (n *linuxNetwork) teardownIIFBasedContainerRouteRules(rtTable int, log logg
 	}
 	log.Debugf("Successfully deleted IIF based rules, rtTable=%v", rtTable)
 
+	return nil
+}
+
+// setUpHostNeigh statically set arp container MAC to hostVeth
+func (n *linuxNetwork) setUpHostNeigh(hostVeth netlink.Link, containerAddr *net.IPNet, containerHWAddr net.HardwareAddr) error {
+	neigh := &netlink.Neigh{
+		LinkIndex:    hostVeth.Attrs().Index,
+		State:        netlink.NUD_PERMANENT,
+		IP:           containerAddr.IP,
+		HardwareAddr: containerHWAddr,
+	}
+	if err := n.netLink.NeighAdd(neigh); err != nil {
+		return errors.Wrapf(err, "setup NS network: failed to add static ARP of %v", neigh)
+	}
 	return nil
 }
 
